@@ -65,11 +65,11 @@ static char s_steps_buf[8];
 static char s_cal_buf[8];
 static char s_batt_buf[8];
 
-static int s_hr = 888;
-static int s_steps = 8888;
-static int s_calories = 8888;
-static int s_battery_percent = 100;
-static bool s_charging = true;
+static int s_hr = 0;
+static int s_steps = 0;
+static int s_calories = 0;
+static int s_battery_percent = 0;
+static bool s_charging = false;
 
 // --- helpers --------------------------------------------------------------
 
@@ -320,9 +320,9 @@ static void init(void) {
   // Subscriptions
   tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
 
-//   BatteryChargeState st = battery_state_service_peek();
-//   s_battery_percent = st.charge_percent;
-//   s_charging = st.is_charging;
+  BatteryChargeState st = battery_state_service_peek();
+  s_battery_percent = st.charge_percent;
+  s_charging = st.is_charging;
   battery_state_service_subscribe(battery_handler);
 
 #if defined(PBL_HEALTH)
