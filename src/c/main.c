@@ -28,10 +28,17 @@
 
 // --- layout constants ----------------------------------
 
+#define TIME_TEXT_Y_OFFSET   10
 #define STAT_TEXT_X_OFFSET   (ICON_BOX_W + 2)
-#define STAT_TEXT_Y_OFFSET   (-2)
+#define STAT_TEXT_Y_OFFSET   -6
 #define STAT_ROW_GAP_PX      4
-#define STAT_PEEK_MARGIN_PX  2
+#define STAT_PEEK_MARGIN_PX  -10
+
+// Sized for Bitham 30 (30*1.25=27) and Gothic 28 (28*1.25=35)
+#define TIME_ROW_H           36
+#define JOIN_ROW_H           34
+#define DATE_H               34
+#define STAT_TEXT_H          34
 
 // Timeline Quick View ("Peek") obstructs the bottom of the screen when an
 // event is imminent. See the JS version for context — confirm on hardware.
@@ -58,11 +65,11 @@ static char s_steps_buf[8];
 static char s_cal_buf[8];
 static char s_batt_buf[8];
 
-static int s_hr = 0;
-static int s_steps = 0;
-static int s_calories = 0;
+static int s_hr = 888;
+static int s_steps = 8888;
+static int s_calories = 8888;
 static int s_battery_percent = 100;
-static bool s_charging = false;
+static bool s_charging = true;
 
 // --- helpers --------------------------------------------------------------
 
@@ -119,7 +126,7 @@ static void stats_update_proc(Layer *layer, GContext *ctx) {
   format_stat(s_hr, s_hr_buf, sizeof(s_hr_buf));
   graphics_context_set_text_color(ctx, magenta);
   graphics_draw_text(ctx, s_hr_buf, s_regular_font,
-    GRect(xLeft + STAT_TEXT_X_OFFSET, yRow1 + STAT_TEXT_Y_OFFSET, 80, 28),
+    GRect(xLeft + STAT_TEXT_X_OFFSET, yRow1 + STAT_TEXT_Y_OFFSET, 80, STAT_TEXT_H),
     GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 
   // Steps
@@ -127,7 +134,7 @@ static void stats_update_proc(Layer *layer, GContext *ctx) {
   format_stat(s_steps, s_steps_buf, sizeof(s_steps_buf));
   graphics_context_set_text_color(ctx, cyan);
   graphics_draw_text(ctx, s_steps_buf, s_regular_font,
-    GRect(xRight + STAT_TEXT_X_OFFSET, yRow1 + STAT_TEXT_Y_OFFSET, 80, 28),
+    GRect(xRight + STAT_TEXT_X_OFFSET, yRow1 + STAT_TEXT_Y_OFFSET, 80, STAT_TEXT_H),
     GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 
   // Flame (calories)
@@ -135,7 +142,7 @@ static void stats_update_proc(Layer *layer, GContext *ctx) {
   format_stat(s_calories, s_cal_buf, sizeof(s_cal_buf));
   graphics_context_set_text_color(ctx, peach);
   graphics_draw_text(ctx, s_cal_buf, s_regular_font,
-    GRect(xLeft + STAT_TEXT_X_OFFSET, yRow2 + STAT_TEXT_Y_OFFSET, 80, 28),
+    GRect(xLeft + STAT_TEXT_X_OFFSET, yRow2 + STAT_TEXT_Y_OFFSET, 80, STAT_TEXT_H),
     GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 
   // Battery
@@ -143,7 +150,7 @@ static void stats_update_proc(Layer *layer, GContext *ctx) {
   format_stat(s_battery_percent, s_batt_buf, sizeof(s_batt_buf));
   graphics_context_set_text_color(ctx, battC);
   graphics_draw_text(ctx, s_batt_buf, s_regular_font,
-    GRect(xRight + STAT_TEXT_X_OFFSET, yRow2 + STAT_TEXT_Y_OFFSET, 80, 28),
+    GRect(xRight + STAT_TEXT_X_OFFSET, yRow2 + STAT_TEXT_Y_OFFSET, 80, STAT_TEXT_H),
     GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 }
 
@@ -168,13 +175,23 @@ static void update_time_text(struct tm *tick_time) {
     strncpy(s_join_buf,   join,   sizeof(s_join_buf));
     strncpy(s_hour_buf,   hour,   sizeof(s_hour_buf));
   }
+  
+  int y_offset = end[0] ? (TIME_ROW_H / 2) : 0;
+  
+  GRect mf = layer_get_frame(text_layer_get_layer(s_minute_layer));
+  mf.origin.y = TIME_TEXT_Y_OFFSET + y_offset;
+  layer_set_frame(text_layer_get_layer(s_minute_layer), mf);
+  
+  GRect jf = layer_get_frame(text_layer_get_layer(s_join_layer));
+  jf.origin.y = TIME_TEXT_Y_OFFSET + y_offset + TIME_ROW_H;
+  layer_set_frame(text_layer_get_layer(s_join_layer), jf);
 
   text_layer_set_text(s_minute_layer, s_minute_buf);
   text_layer_set_text(s_join_layer,   s_join_buf);
   text_layer_set_text(s_hour_layer,   s_hour_buf);
 
-  // Date: "Tuesday, March 10"
-  strftime(s_date_buf, sizeof(s_date_buf), "%A, %B %e", tick_time);
+  // Date: "Wed, Sep 30"
+  strftime(s_date_buf, sizeof(s_date_buf), "%a, %b %e", tick_time);
   text_layer_set_text(s_date_layer, s_date_buf);
 }
 
@@ -251,32 +268,31 @@ static void main_window_load(Window *window) {
   window_set_background_color(window, GColorBlack);
 
   s_bold_font = fonts_get_system_font(FONT_KEY_BITHAM_30_BLACK);
-  s_regular_font = fonts_get_system_font(FONT_KEY_GOTHIC_24);
+  s_regular_font = fonts_get_system_font(FONT_KEY_GOTHIC_28);
 
   // Time block — three stacked text layers, centred.
   int y0 = 10;
-  int row_h = 32;
   s_minute_layer = make_text_layer(root,
-    GRect(0, y0, bounds.size.w, row_h), s_bold_font, GColorWhite, GTextAlignmentCenter);
+    GRect(0, y0, bounds.size.w, TIME_ROW_H), s_bold_font, GColorWhite, GTextAlignmentCenter);
   s_join_layer = make_text_layer(root,
-    GRect(0, y0 + row_h, bounds.size.w, 28), s_regular_font,
-    GColorLightGray, GTextAlignmentCenter);
+    GRect(0, y0 + TIME_ROW_H, bounds.size.w, JOIN_ROW_H), s_regular_font,
+    GColorWhite, GTextAlignmentCenter);
   s_hour_layer = make_text_layer(root,
-    GRect(0, y0 + row_h + 28, bounds.size.w, row_h), s_bold_font,
+    GRect(0, y0 + TIME_ROW_H + JOIN_ROW_H, bounds.size.w, TIME_ROW_H), s_bold_font,
     GColorWhite, GTextAlignmentCenter);
 
   // Stats layer occupies the row band above the Peek zone.
-  int stats_h = 2 * ICON_BOX_H + STAT_ROW_GAP_PX;
+  int stats_h = ICON_BOX_H + STAT_ROW_GAP_PX + STAT_TEXT_H;
   int stats_y = bounds.size.h - PEEK_HEIGHT_PX - stats_h - STAT_PEEK_MARGIN_PX;
   s_stats_layer = layer_create(GRect(0, stats_y, bounds.size.w, stats_h));
   layer_set_update_proc(s_stats_layer, stats_update_proc);
   layer_add_child(root, s_stats_layer);
 
   // Date at the bottom (will be covered by Peek when active — fine).
-  int date_h = 28;
+  int date_y = bounds.size.h - PEEK_HEIGHT_PX + (PEEK_HEIGHT_PX - DATE_H)/2;
   s_date_layer = make_text_layer(root,
-    GRect(0, bounds.size.h - date_h - 4, bounds.size.w, date_h),
-    s_regular_font, GColorLightGray, GTextAlignmentCenter);
+    GRect(0, date_y, bounds.size.w, DATE_H),
+    s_regular_font, GColorWhite, GTextAlignmentCenter);
 }
 
 static void main_window_unload(Window *window) {
@@ -304,9 +320,9 @@ static void init(void) {
   // Subscriptions
   tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
 
-  BatteryChargeState st = battery_state_service_peek();
-  s_battery_percent = st.charge_percent;
-  s_charging = st.is_charging;
+//   BatteryChargeState st = battery_state_service_peek();
+//   s_battery_percent = st.charge_percent;
+//   s_charging = st.is_charging;
   battery_state_service_subscribe(battery_handler);
 
 #if defined(PBL_HEALTH)
