@@ -1,0 +1,37 @@
+{
+    "author": "asellitt",
+    "dependencies": {},
+    "keywords": [
+        "pebble-app"
+    ],
+    "name": "fuzzy-text-watchface",
+    "pebble": {
+        "capabilities": [
+            "health"
+        ],
+        "displayName": "Fuzzy Text Watchface",
+        "enableMultiJS": true,
+        "messageKeys": [],
+        "projectType": "native",
+        "resources": {
+            "media": [
+                {
+                    "file": "images/menu-icon",
+                    "menuIcon": true,
+                    "name": "IMAGE_MENU_ICON",
+                    "targetPlatforms": null,
+                    "type": "png"
+                }
+            ]
+        },
+        "sdkVersion": "3",
+        "targetPlatforms": [
+            "emery"
+        ],
+        "uuid": "c39b3203-7702-4ebb-884e-eb6b99058b48",
+        "watchapp": {
+            "watchface": true
+        }
+    },
+    "version": "1.0.0"
+}
