@@ -1,25 +1,12 @@
 // ---------------------------------------------------------------------------
-// Fuzzy Text Clockface
+// Fuzzy Text Watchface
 // ---------------------------------------------------------------------------
 //
 // Targets Pebble Time 2 (Emery, 200x228, colour). Other platforms work but
 // HRM is Emery-only; on Flint the heart row will show 0 (no hardware).
 //
-// Layout:
-//   - Centred 3-line fuzzy time (e.g. "twenty five / past / five")
-//   - 2x2 stat grid: heart | steps / flame | battery
-//   - Date centred at the bottom
-//   - Stat row 2 sits above the Timeline Quick View ("Peek") zone.
-//
-// State updates:
-//   - tick_handler           — every minute → refresh time + date
-//   - battery_handler        — battery level / charging changes
-//   - health_handler         — steps, calories, HR updates
-//
-// Drawing:
-//   - Time, join, and date text use TextLayers (cheap, pre-rendered text).
-//   - Stat icons + their numeric values are drawn in one custom Layer's
-//     update_proc so we don't have to manage four separate icon layers.
+// Settings: Dark / Light mode, configurable via the Pebble phone app (Clay).
+// Defaults to Dark on first launch.
 // ---------------------------------------------------------------------------
 
 #include <pebble.h>
@@ -40,9 +27,55 @@
 #define DATE_H               34
 #define STAT_TEXT_H          34
 
-// Timeline Quick View ("Peek") obstructs the bottom of the screen when an
-// event is imminent. See the JS version for context — confirm on hardware.
+// Timeline Quick View ("Peek") obstructs the bottom of the screen.
 #define PEEK_HEIGHT_PX       51
+
+// Persistent storage keys
+#define PERSIST_KEY_DARK_MODE  1
+
+// --- palette -------------------------------------------------------------
+// Two complete palettes; swap by reassigning s_palette pointer.
+
+typedef struct {
+  GColor bg;          // window background, icon punch-through, battery interior
+  GColor text;        // time, date, "past" — also battery outline
+  GColor heart;
+  GColor steps;
+  GColor flame;
+  GColor batt_good;
+  GColor batt_med;
+  GColor batt_low;
+} Palette;
+
+static Palette s_palette;
+
+static void apply_palette(bool dark_mode) {
+  if (dark_mode) {
+    s_palette.bg        = GColorBlack;
+    s_palette.text      = GColorWhite;
+    s_palette.heart     = GColorFromRGB(248,  60, 140); // Ping
+    s_palette.steps     = GColorFromRGB( 20, 211, 245); // Cyan
+    s_palette.flame     = GColorFromRGB(255, 159,  51); // Orange
+    s_palette.batt_good = GColorFromRGB(  0, 166,  41); // Green
+    s_palette.batt_med  = GColorFromRGB(255, 170,   0); // Yellow
+    s_palette.batt_low  = GColorFromRGB(255,   0,   0); // Red
+  } else {
+    s_palette.bg        = GColorWhite;
+    s_palette.text      = GColorBlack;
+    s_palette.heart     = GColorFromRGB(170,   0,  85); // Magenta
+    s_palette.steps     = GColorFromRGB(  0,  85, 170); // Blue
+    s_palette.flame     = GColorFromRGB(255, 102,   0); // Orange
+    s_palette.batt_good = GColorFromRGB(  0, 166,  41); // Green
+    s_palette.batt_med  = GColorFromRGB(255, 102,   0); // Orange
+    s_palette.batt_low  = GColorFromRGB(255,   0,   0); // Red
+  }
+}
+
+static GColor battery_colour(int percent) {
+  if (percent > 40) return s_palette.batt_good;
+  if (percent > 20) return s_palette.batt_med;
+  return s_palette.batt_low;
+}
 
 // --- module state ---------------------------------------------------------
 
@@ -51,7 +84,7 @@ static TextLayer  *s_minute_layer;
 static TextLayer  *s_join_layer;
 static TextLayer  *s_hour_layer;
 static TextLayer  *s_date_layer;
-static Layer      *s_stats_layer; // owns icon + number drawing
+static Layer      *s_stats_layer;
 
 static GFont s_bold_font;
 static GFont s_regular_font;
@@ -70,10 +103,10 @@ static int s_steps = 0;
 static int s_calories = 0;
 static int s_battery_percent = 0;
 static bool s_charging = false;
+static bool s_dark_mode = false;
 
 // --- helpers --------------------------------------------------------------
 
-// "12345" -> "12K" for values >= 10000. Same logic as utils.js formatStat.
 static void format_stat(int value, char *out, size_t out_size) {
   if (value >= 10000) {
     snprintf(out, out_size, "%dK", value / 1000);
@@ -82,71 +115,50 @@ static void format_stat(int value, char *out, size_t out_size) {
   }
 }
 
-// --- brand palette --------------------------------------------------------
-// Pebble colour displays use a 64-colour palette (2 bits per channel).
-// GColorFromRGB() quantizes any RGB input to the nearest palette entry.
-// Values mirror the JS palette (fb-magenta / fb-peach / fb-cyan).
-#define COLOUR_MAGENTA  GColorFromRGB(248,  60, 140)  // -> GColorShockingPink
-#define COLOUR_PEACH    GColorFromRGB(255, 159,  51)  // -> GColorRajah
-#define COLOUR_CYAN     GColorFromRGB( 20, 211, 245)  // -> GColorCyan
-#define COLOUR_GREEN    GColorFromRGB(  0, 166,  41)  // -> GColorIslamicGreen
-#define COLOUR_YELLOW   GColorFromRGB(255, 170,   0)  // -> GColorChromeYellow
-#define COLOUR_RED      GColorFromRGB(255,   0,   0)  // -> GColorRed
-#define COLOUR_DIM      GColorLightGray
-
-static GColor battery_colour(int percent) {
-  if (percent > 40) return COLOUR_GREEN;
-  if (percent > 20) return COLOUR_YELLOW;
-  return COLOUR_RED;
-}
-
 // --- stats layer update proc ---------------------------------------------
 
 static void stats_update_proc(Layer *layer, GContext *ctx) {
   GRect bounds = layer_get_bounds(layer);
-  graphics_context_set_text_color(ctx, GColorWhite); // overridden per-stat
 
-  // Background fill (stats layer is the stat band only, not the whole screen)
-  graphics_context_set_fill_color(ctx, GColorBlack);
+  // Background fill — uses palette so the stat band matches the rest.
+  graphics_context_set_fill_color(ctx, s_palette.bg);
   graphics_fill_rect(ctx, bounds, 0, GCornerNone);
 
-  // Column origins inside the layer's own coordinate space.
   int xLeft = bounds.size.w * 5 / 100;
   int xRight = bounds.size.w * 55 / 100;
   int yRow1 = 0;
   int yRow2 = ICON_BOX_H + STAT_ROW_GAP_PX;
 
-  GColor magenta = COLOUR_MAGENTA;
-  GColor cyan    = COLOUR_CYAN;
-  GColor peach   = COLOUR_PEACH;
-  GColor battC   = battery_colour(s_battery_percent);
+  GColor battC = battery_colour(s_battery_percent);
 
   // Heart
-  icons_draw_heart(ctx, xLeft, yRow1, magenta, GColorBlack);
+  icons_draw_heart(ctx, xLeft, yRow1, s_palette.heart, s_palette.bg);
   format_stat(s_hr, s_hr_buf, sizeof(s_hr_buf));
-  graphics_context_set_text_color(ctx, magenta);
+  graphics_context_set_text_color(ctx, s_palette.heart);
   graphics_draw_text(ctx, s_hr_buf, s_regular_font,
     GRect(xLeft + STAT_TEXT_X_OFFSET, yRow1 + STAT_TEXT_Y_OFFSET, 80, STAT_TEXT_H),
     GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 
   // Steps
-  icons_draw_steps(ctx, xRight, yRow1, cyan);
+  icons_draw_steps(ctx, xRight, yRow1, s_palette.steps);
   format_stat(s_steps, s_steps_buf, sizeof(s_steps_buf));
-  graphics_context_set_text_color(ctx, cyan);
+  graphics_context_set_text_color(ctx, s_palette.steps);
   graphics_draw_text(ctx, s_steps_buf, s_regular_font,
     GRect(xRight + STAT_TEXT_X_OFFSET, yRow1 + STAT_TEXT_Y_OFFSET, 80, STAT_TEXT_H),
     GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 
   // Flame (calories)
-  icons_draw_flame(ctx, xLeft, yRow2, peach, GColorBlack);
+  icons_draw_flame(ctx, xLeft, yRow2, s_palette.flame, s_palette.bg);
   format_stat(s_calories, s_cal_buf, sizeof(s_cal_buf));
-  graphics_context_set_text_color(ctx, peach);
+  graphics_context_set_text_color(ctx, s_palette.flame);
   graphics_draw_text(ctx, s_cal_buf, s_regular_font,
     GRect(xLeft + STAT_TEXT_X_OFFSET, yRow2 + STAT_TEXT_Y_OFFSET, 80, STAT_TEXT_H),
     GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 
-  // Battery
-  icons_draw_battery(ctx, xRight, yRow2, battC, s_battery_percent, s_charging);
+  // Battery — outline + interior come from the palette so light mode inverts.
+  icons_draw_battery(ctx, xRight, yRow2,
+                     s_palette.text, s_palette.bg, battC,
+                     s_battery_percent, s_charging);
   format_stat(s_battery_percent, s_batt_buf, sizeof(s_batt_buf));
   graphics_context_set_text_color(ctx, battC);
   graphics_draw_text(ctx, s_batt_buf, s_regular_font,
@@ -166,7 +178,6 @@ static void update_time_text(struct tm *tick_time) {
   const char *end    = fuzzy_end_word(m);
 
   if (end[0]) {
-    // Two-line layout: HOUR / o'clock
     strncpy(s_minute_buf, hour, sizeof(s_minute_buf));
     strncpy(s_join_buf,   end,  sizeof(s_join_buf));
     s_hour_buf[0] = '\0';
@@ -175,13 +186,13 @@ static void update_time_text(struct tm *tick_time) {
     strncpy(s_join_buf,   join,   sizeof(s_join_buf));
     strncpy(s_hour_buf,   hour,   sizeof(s_hour_buf));
   }
-  
+
   int y_offset = end[0] ? (TIME_ROW_H / 2) : 0;
-  
+
   GRect mf = layer_get_frame(text_layer_get_layer(s_minute_layer));
   mf.origin.y = TIME_TEXT_Y_OFFSET + y_offset;
   layer_set_frame(text_layer_get_layer(s_minute_layer), mf);
-  
+
   GRect jf = layer_get_frame(text_layer_get_layer(s_join_layer));
   jf.origin.y = TIME_TEXT_Y_OFFSET + y_offset + TIME_ROW_H;
   layer_set_frame(text_layer_get_layer(s_join_layer), jf);
@@ -190,7 +201,6 @@ static void update_time_text(struct tm *tick_time) {
   text_layer_set_text(s_join_layer,   s_join_buf);
   text_layer_set_text(s_hour_layer,   s_hour_buf);
 
-  // Date: "Wed, Sep 30"
   strftime(s_date_buf, sizeof(s_date_buf), "%a, %b %e", tick_time);
   text_layer_set_text(s_date_layer, s_date_buf);
 }
@@ -223,12 +233,11 @@ static void refresh_health(void) {
   HealthServiceAccessibilityMask cal_mask =
     health_service_metric_accessible(HealthMetricActiveKCalories, start, end);
   if (cal_mask & HealthServiceAccessibilityMaskAvailable) {
-    int active   = (int)health_service_sum_today(HealthMetricActiveKCalories);
-    int resting  = (int)health_service_sum_today(HealthMetricRestingKCalories);
-    s_calories = active + resting; // total daily kcal, like the Fitbit original
+    int active  = (int)health_service_sum_today(HealthMetricActiveKCalories);
+    int resting = (int)health_service_sum_today(HealthMetricRestingKCalories);
+    s_calories = active + resting;
   }
 
-  // Heart rate is a peek, not a sum.
   HealthValue bpm = health_service_peek_current_value(HealthMetricHeartRateBPM);
   if (bpm > 0) s_hr = (int)bpm;
 
@@ -249,6 +258,31 @@ static void health_handler(HealthEventType event, void *context) {
 }
 #endif
 
+// --- mode application -----------------------------------------------------
+
+static void repaint_for_mode(void) {
+  window_set_background_color(s_window, s_palette.bg);
+  text_layer_set_text_color(s_minute_layer, s_palette.text);
+  text_layer_set_text_color(s_join_layer,   s_palette.text);
+  text_layer_set_text_color(s_hour_layer,   s_palette.text);
+  text_layer_set_text_color(s_date_layer,   s_palette.text);
+  layer_mark_dirty(s_stats_layer);
+  layer_mark_dirty(window_get_root_layer(s_window));
+}
+
+// --- AppMessage inbox -----------------------------------------------------
+
+static void inbox_received_callback(DictionaryIterator *iter, void *context) {
+  Tuple *t = dict_find(iter, MESSAGE_KEY_DARK_MODE);
+  if (t) {
+    // Clay sends booleans as int32 (0 or 1).
+    s_dark_mode = (t->value->int32 != 0);
+    persist_write_bool(PERSIST_KEY_DARK_MODE, s_dark_mode);
+    apply_palette(s_dark_mode);
+    repaint_for_mode();
+  }
+}
+
 // --- window load/unload ---------------------------------------------------
 
 static TextLayer *make_text_layer(Layer *parent, GRect frame, GFont font,
@@ -265,34 +299,31 @@ static TextLayer *make_text_layer(Layer *parent, GRect frame, GFont font,
 static void main_window_load(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root);
-  window_set_background_color(window, GColorBlack);
+  window_set_background_color(window, s_palette.bg);
 
   s_bold_font = fonts_get_system_font(FONT_KEY_BITHAM_30_BLACK);
   s_regular_font = fonts_get_system_font(FONT_KEY_GOTHIC_28);
 
-  // Time block — three stacked text layers, centred.
   int y0 = 10;
   s_minute_layer = make_text_layer(root,
-    GRect(0, y0, bounds.size.w, TIME_ROW_H), s_bold_font, GColorWhite, GTextAlignmentCenter);
+    GRect(0, y0, bounds.size.w, TIME_ROW_H), s_bold_font, s_palette.text, GTextAlignmentCenter);
   s_join_layer = make_text_layer(root,
     GRect(0, y0 + TIME_ROW_H, bounds.size.w, JOIN_ROW_H), s_regular_font,
-    GColorWhite, GTextAlignmentCenter);
+    s_palette.text, GTextAlignmentCenter);
   s_hour_layer = make_text_layer(root,
     GRect(0, y0 + TIME_ROW_H + JOIN_ROW_H, bounds.size.w, TIME_ROW_H), s_bold_font,
-    GColorWhite, GTextAlignmentCenter);
+    s_palette.text, GTextAlignmentCenter);
 
-  // Stats layer occupies the row band above the Peek zone.
   int stats_h = ICON_BOX_H + STAT_ROW_GAP_PX + STAT_TEXT_H;
   int stats_y = bounds.size.h - PEEK_HEIGHT_PX - stats_h - STAT_PEEK_MARGIN_PX;
   s_stats_layer = layer_create(GRect(0, stats_y, bounds.size.w, stats_h));
   layer_set_update_proc(s_stats_layer, stats_update_proc);
   layer_add_child(root, s_stats_layer);
 
-  // Date at the bottom (will be covered by Peek when active — fine).
   int date_y = bounds.size.h - PEEK_HEIGHT_PX + (PEEK_HEIGHT_PX - DATE_H)/2;
   s_date_layer = make_text_layer(root,
     GRect(0, date_y, bounds.size.w, DATE_H),
-    s_regular_font, GColorWhite, GTextAlignmentCenter);
+    s_regular_font, s_palette.text, GTextAlignmentCenter);
 }
 
 static void main_window_unload(Window *window) {
@@ -306,6 +337,12 @@ static void main_window_unload(Window *window) {
 // --- init / deinit / main -------------------------------------------------
 
 static void init(void) {
+  // Load the persisted dark-mode preference (defaults to true on first run).
+  s_dark_mode = persist_exists(PERSIST_KEY_DARK_MODE)
+                ? persist_read_bool(PERSIST_KEY_DARK_MODE)
+                : s_dark_mode;
+  apply_palette(s_dark_mode);
+
   s_window = window_create();
   window_set_window_handlers(s_window, (WindowHandlers) {
     .load = main_window_load,
@@ -313,11 +350,9 @@ static void init(void) {
   });
   window_stack_push(s_window, true);
 
-  // Initial paint
   time_t now = time(NULL);
   update_time_text(localtime(&now));
 
-  // Subscriptions
   tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
 
   BatteryChargeState st = battery_state_service_peek();
@@ -332,6 +367,10 @@ static void init(void) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "Health service unavailable");
   }
 #endif
+
+  // AppMessage for settings updates from Clay (Pebble phone app).
+  app_message_register_inbox_received(inbox_received_callback);
+  app_message_open(64, 64); // small buffer — we only ever receive one bool
 }
 
 static void deinit(void) {

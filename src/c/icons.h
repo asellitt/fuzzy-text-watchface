@@ -14,5 +14,6 @@
 void icons_draw_heart(GContext *ctx, int x, int y, GColor color, GColor bgColor);
 void icons_draw_steps(GContext *ctx, int x, int y, GColor color);
 void icons_draw_flame(GContext *ctx, int x, int y, GColor color, GColor bgColor);
-void icons_draw_battery(GContext *ctx, int x, int y, GColor color,
+void icons_draw_battery(GContext *ctx, int x, int y,
+                        GColor outline, GColor bg, GColor fill,
                         int percent, bool charging);

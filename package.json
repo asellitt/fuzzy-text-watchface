@@ -1,17 +1,22 @@
 {
     "author": "asellitt",
-    "dependencies": {},
+    "dependencies": {
+        "pebble-clay": "^1.0.4"
+    },
     "keywords": [
         "pebble-app"
     ],
     "name": "fuzzy-text-watchface",
     "pebble": {
         "capabilities": [
+            "configurable",
             "health"
         ],
         "displayName": "Fuzzy Text Watchface",
         "enableMultiJS": true,
-        "messageKeys": [],
+        "messageKeys": [
+            "DARK_MODE"
+        ],
         "projectType": "native",
         "resources": {
             "media": [

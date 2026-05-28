@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Icon primitives.
 //
-// Run tables are stored as static const int8_t arrays. Drawing uses 
+// Run tables are stored as static const int8_t arrays. Drawing uses
 // graphics_fill_rect() with corner radius 0.
 // ---------------------------------------------------------------------------
 
@@ -169,13 +169,12 @@ void icons_draw_flame(GContext *ctx, int x, int y, GColor color, GColor bgColor)
 
 // ---- Battery -------------------------------------------------------------
 
-void icons_draw_battery(GContext *ctx, int x, int y, GColor color,
+void icons_draw_battery(GContext *ctx, int x, int y,
+                        GColor outline, GColor bg, GColor fill,
                         int percent, bool charging) {
   x += 5; // centre 13w body within 24w box
-  GColor white = GColorWhite;
-  GColor black = GColorBlack;
 
-  graphics_context_set_fill_color(ctx, white);
+  graphics_context_set_fill_color(ctx, outline);
   graphics_fill_rect(ctx, GRect(x + 4,  y + 0,  5,  1), 0, GCornerNone);
   graphics_fill_rect(ctx, GRect(x + 1,  y + 1,  11, 1), 0, GCornerNone);
   graphics_fill_rect(ctx, GRect(x + 0,  y + 2,  13, 1), 0, GCornerNone);
@@ -183,18 +182,18 @@ void icons_draw_battery(GContext *ctx, int x, int y, GColor color,
   graphics_fill_rect(ctx, GRect(x + 12, y + 3,  1,  18), 0, GCornerNone);
   graphics_fill_rect(ctx, GRect(x + 0,  y + 21, 13, 2), 0, GCornerNone);
 
-  graphics_context_set_fill_color(ctx, black);
+  graphics_context_set_fill_color(ctx, bg);
   graphics_fill_rect(ctx, GRect(x + 1, y + 3, 11, 18), 0, GCornerNone);
 
   if (percent > 0) {
     int fillH = (16 * percent) / 100;
     if (fillH < 1) fillH = 1;
-    graphics_context_set_fill_color(ctx, color);
+    graphics_context_set_fill_color(ctx, fill);
     graphics_fill_rect(ctx, GRect(x + 2, y + 20 - fillH, 9, fillH), 0, GCornerNone);
   }
 
   if (charging) {
-    graphics_context_set_fill_color(ctx, white);
+    graphics_context_set_fill_color(ctx, outline);
     static const int8_t bolt[] = {
       5, 8, 3, 1,
       6, 7, 3, 1,
